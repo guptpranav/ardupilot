@@ -20,8 +20,8 @@
 #include "rtwtypes.h"
 
 // Model step function
-void arduAttCont::step(real32_T arg_attiude_error[3], real32_T arg_rate_ff[3],
-  real32_T arg_rate_meas[3], real32_T (&arg_Out1)[3])
+void arduAttCont::step(real32_T arg_attitude_error[3], real32_T arg_rate_ff[3],
+  real32_T arg_rate_meas[3], real32_T (&arg_CtrlOUT)[3])
 {
   real32_T rtb_FilterCoefficient;
   real32_T rtb_FilterCoefficient_g;
@@ -36,7 +36,7 @@ void arduAttCont::step(real32_T arg_attiude_error[3], real32_T arg_rate_ff[3],
   //   Inport: '<Root>/rate_feedforward'
   //   Inport: '<Root>/rate_measured'
 
-  rtb_rollsum = (arduAttCont_P.ANG_RLL_P * arg_attiude_error[0] + arg_rate_ff[0])
+  rtb_rollsum = (arduAttCont_P.ANG_RLL_P * arg_attitude_error[0] + arg_rate_ff[0])
     - arg_rate_meas[0];
 
   // Gain: '<S86>/Filter Coefficient' incorporates:
@@ -53,7 +53,7 @@ void arduAttCont::step(real32_T arg_attiude_error[3], real32_T arg_rate_ff[3],
   //   Inport: '<Root>/rate_feedforward'
   //   Inport: '<Root>/rate_measured'
 
-  rtb_pitchsum = (arduAttCont_P.ANG_PIT_P * arg_attiude_error[1] + arg_rate_ff[1])
+  rtb_pitchsum = (arduAttCont_P.ANG_PIT_P * arg_attitude_error[1] + arg_rate_ff[1])
     - arg_rate_meas[1];
 
   // Gain: '<S38>/Filter Coefficient' incorporates:
@@ -70,7 +70,7 @@ void arduAttCont::step(real32_T arg_attiude_error[3], real32_T arg_rate_ff[3],
   //   Inport: '<Root>/rate_feedforward'
   //   Inport: '<Root>/rate_measured'
 
-  rtb_yawsum = (arduAttCont_P.ANG_YAW_P * arg_attiude_error[2] + arg_rate_ff[2])
+  rtb_yawsum = (arduAttCont_P.ANG_YAW_P * arg_attitude_error[2] + arg_rate_ff[2])
     - arg_rate_meas[2];
 
   // Gain: '<S134>/Filter Coefficient' incorporates:
@@ -92,11 +92,11 @@ void arduAttCont::step(real32_T arg_attiude_error[3], real32_T arg_rate_ff[3],
   //   Sum: '<S44>/Sum'
   //   Sum: '<S92>/Sum'
 
-  arg_Out1[0] = (arduAttCont_P.RAT_RLL_P * rtb_rollsum +
+  arg_CtrlOUT[0] = (arduAttCont_P.RAT_RLL_P * rtb_rollsum +
                  arduAttCont_DW.Integrator_DSTATE) + rtb_FilterCoefficient;
-  arg_Out1[1] = (arduAttCont_P.RAT_PIT_P * rtb_pitchsum +
+  arg_CtrlOUT[1] = (arduAttCont_P.RAT_PIT_P * rtb_pitchsum +
                  arduAttCont_DW.Integrator_DSTATE_k) + rtb_FilterCoefficient_g;
-  arg_Out1[2] = (arduAttCont_P.RAT_YAW_P * rtb_yawsum +
+  arg_CtrlOUT[2] = (arduAttCont_P.RAT_YAW_P * rtb_yawsum +
                  arduAttCont_DW.Integrator_DSTATE_a) + rtb_FilterCoefficient_p;
 
   // Update for DiscreteIntegrator: '<S83>/Integrator' incorporates:
