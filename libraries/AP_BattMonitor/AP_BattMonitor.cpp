@@ -20,6 +20,7 @@
 #include "AP_BattMonitor_Torqeedo.h"
 #include "AP_BattMonitor_FuelLevel_Analog.h"
 #include "AP_BattMonitor_Synthetic_Current.h"
+#include "AP_BattMonitor_AD7091R5.h"
 
 #include <AP_HAL/AP_HAL.h>
 
@@ -554,6 +555,11 @@ AP_BattMonitor::init()
                 drivers[instance] = new AP_BattMonitor_EFI(*this, state[instance], _params[instance]);
                 break;
 #endif // AP_BATTERY_EFI_ENABLED
+#if AP_BATTERY_AD7091R5_ENABLED
+            case Type::AD7091R5:
+                drivers[instance] = new AP_BattMonitor_AD7091R5(*this, state[instance], _params[instance]);
+                break;
+#endif// AP_BATTERY_AD7091R5_ENABLED
             case Type::NONE:
             default:
                 break;
@@ -872,6 +878,23 @@ const AP_BattMonitor::cells & AP_BattMonitor::get_cell_voltages(const uint8_t in
     } else {
         return state[instance].cell_voltages;
     }
+}
+
+// get once cell voltage (for scripting)
+bool AP_BattMonitor::get_cell_voltage(uint8_t instance, uint8_t cell, float &voltage) const
+{
+    if (!has_cell_voltages(instance) ||
+        cell >= AP_BATT_MONITOR_CELLS_MAX) {
+        return false;
+    }
+    const auto &cell_voltages = get_cell_voltages(instance);
+    const uint16_t voltage_mv = cell_voltages.cells[cell];
+    if (voltage_mv == 0 || voltage_mv == UINT16_MAX) {
+        // UINT16_MAX is used as invalid indicator
+        return false;
+    }
+    voltage = voltage_mv*0.001;
+    return true;
 }
 
 // returns true if there is a temperature reading

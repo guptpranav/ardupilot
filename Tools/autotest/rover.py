@@ -14,13 +14,13 @@ import os
 import sys
 import time
 
-from common import AutoTest
+import vehicle_test_suite
+
 from pysim import util
 
-from common import AutoTestTimeoutException
-from common import MsgRcvTimeoutException
-from common import NotAchievedException
-from common import PreconditionFailedException
+from vehicle_test_suite import AutoTestTimeoutException
+from vehicle_test_suite import NotAchievedException
+from vehicle_test_suite import PreconditionFailedException
 
 from pymavlink import mavextra
 from pymavlink import mavutil
@@ -34,7 +34,7 @@ SITL_START_LOCATION = mavutil.location(40.071374969556928,
                                        246)
 
 
-class AutoTestRover(AutoTest):
+class AutoTestRover(vehicle_test_suite.TestSuite):
     @staticmethod
     def get_not_armable_mode_list():
         return ["RTL", "SMART_RTL"]
@@ -389,34 +389,18 @@ class AutoTestRover(AutoTest):
         self.wait_statustext("Mission Complete", timeout=60, check_context=True)
         self.disarm_vehicle()
 
-    def GetBanner(self):
+    def _MAV_CMD_DO_SEND_BANNER(self, run_cmd):
         '''Get Banner'''
-        target_sysid = self.sysid_thismav()
-        target_compid = 1
-        self.mav.mav.command_long_send(
-            target_sysid,
-            target_compid,
-            mavutil.mavlink.MAV_CMD_DO_SEND_BANNER,
-            1, # confirmation
-            1, # send it
-            0,
-            0,
-            0,
-            0,
-            0,
-            0)
-        start = time.time()
-        while True:
-            m = self.mav.recv_match(type='STATUSTEXT',
-                                    blocking=True,
-                                    timeout=1)
-            if m is not None and "ArduRover" in m.text:
-                self.progress("banner received: %s" % m.text)
-                return
-            if time.time() - start > 10:
-                break
+        self.context_push()
+        self.context_collect('STATUSTEXT')
+        run_cmd(mavutil.mavlink.MAV_CMD_DO_SEND_BANNER)
+        self.wait_statustext("ArduRover", timeout=1, check_context=True)
+        self.context_pop()
 
-        raise MsgRcvTimeoutException("banner not received")
+    def MAV_CMD_DO_SEND_BANNER(self):
+        '''test MAV_CMD_DO_SEND_BANNER'''
+        self._MAV_CMD_DO_SEND_BANNER(self.run_cmd)
+        self._MAV_CMD_DO_SEND_BANNER(self.run_cmd_int)
 
     def drive_brake_get_stopping_distance(self, speed):
         '''measure our stopping distance'''
@@ -1256,6 +1240,8 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         '''Set mode via MAV_COMMAND_DO_SET_MODE'''
         self.do_set_mode_via_command_long("HOLD")
         self.do_set_mode_via_command_long("MANUAL")
+        self.do_set_mode_via_command_int("HOLD")
+        self.do_set_mode_via_command_int("MANUAL")
 
     def RoverInitialMode(self):
         '''test INITIAL_MODE parameter works'''
@@ -5633,7 +5619,10 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             0,
             0,
             0)
+
         self.progress("Sending control message")
+        self.context_push()
+        self.context_collect('COMMAND_LONG')
         self.mav.mav.digicam_control_send(
             1, # target_system
             1, # target_component
@@ -5648,21 +5637,56 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         )
         self.mav.mav.srcSystem = old_srcSystem
 
-        self.progress("Expecting a command long")
-        tstart = self.get_sim_time_cached()
-        while True:
-            now = self.get_sim_time_cached()
-            if now - tstart > 2:
-                raise NotAchievedException("Did not receive digicam_control message")
-            m = self.mav.recv_match(type='COMMAND_LONG', blocking=True, timeout=0.1)
-            self.progress("Message: %s" % str(m))
-            if m is None:
-                continue
-            if m.command != mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONTROL:
-                raise NotAchievedException("Did not get correct command")
-            if m.param6 != 17:
-                raise NotAchievedException("Did not get correct command_id")
-            break
+        self.assert_received_message_field_values('COMMAND_LONG', {
+            'command': mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONTROL,
+            'param6': 17,
+        }, timeout=2, check_context=True)
+        self.context_pop()
+
+        # test sending via commands:
+        for run_cmd in self.run_cmd, self.run_cmd_int:
+            self.progress("Sending control command")
+            self.context_push()
+            self.context_collect('COMMAND_LONG')
+            run_cmd(mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONTROL,
+                    p1=1, # start or keep it up
+                    p2=1, # zoom_pos
+                    p3=0, # zoom_step
+                    p4=0, # focus_lock
+                    p5=0, # 1 shot or start filming
+                    p6=37, # command id (de-dupe field)
+                    )
+
+            self.assert_received_message_field_values('COMMAND_LONG', {
+                'command': mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONTROL,
+                'param6': 37,
+            }, timeout=2, check_context=True)
+
+            self.context_pop()
+
+        # test sending via commands:
+        for run_cmd in self.run_cmd, self.run_cmd_int:
+            self.progress("Sending configure command")
+            self.context_push()
+            self.context_collect('COMMAND_LONG')
+            run_cmd(mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONFIGURE,
+                    p1=1,
+                    p2=1,
+                    p3=0,
+                    p4=0,
+                    p5=12,
+                    p6=37
+                    )
+
+            self.assert_received_message_field_values('COMMAND_LONG', {
+                'command': mavutil.mavlink.MAV_CMD_DO_DIGICAM_CONFIGURE,
+                'param5': 12,
+                'param6': 37,
+            }, timeout=2, check_context=True)
+
+            self.context_pop()
+
+        self.mav.mav.srcSystem = old_srcSystem
 
     def SkidSteer(self):
         '''Check skid-steering'''
@@ -5803,6 +5827,40 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             if msg.groundspeed > 5:
                 break
         self.disarm_vehicle()
+
+    def SET_ATTITUDE_TARGET_heading(self, target_sysid=None, target_compid=1):
+        '''Test handling of SET_ATTITUDE_TARGET'''
+        self.change_mode('GUIDED')
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+
+        for angle in 0, 290, 70, 180, 0:
+            self.SET_ATTITUDE_TARGET_heading_test_target(angle, target_sysid, target_compid)
+        self.disarm_vehicle()
+
+    def SET_ATTITUDE_TARGET_heading_test_target(self, angle, target_sysid, target_compid):
+        if target_sysid is None:
+            target_sysid = self.sysid_thismav()
+
+        def poke_set_attitude(value, target):
+            self.mav.mav.set_attitude_target_send(
+                0, # time_boot_ms
+                target_sysid,
+                target_compid,
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_ROLL_RATE_IGNORE |
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_PITCH_RATE_IGNORE |
+                mavutil.mavlink.ATTITUDE_TARGET_TYPEMASK_BODY_YAW_RATE_IGNORE,
+                mavextra.euler_to_quat([
+                    math.radians(0),
+                    math.radians(0),
+                    math.radians(angle)
+                ]), # att
+                0, # roll rate (rad/s)
+                0, # pitch rate
+                0, # yaw rate
+                1) # thrust
+
+        self.wait_heading(angle, called_function=poke_set_attitude, minimum_duration=5)
 
     def SET_POSITION_TARGET_LOCAL_NED(self, target_sysid=None, target_compid=1):
         '''Test handling of SET_POSITION_TARGET_LOCAL_NED'''
@@ -6514,6 +6572,62 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
         self.do_RTL()
         self.disarm_vehicle()
 
+    def _MAV_CMD_GET_HOME_POSITION(self, run_cmd):
+        '''test handling of mavlink command MAV_CMD_GET_HOME_POSITION'''
+        self.context_collect('HOME_POSITION')
+        run_cmd(mavutil.mavlink.MAV_CMD_GET_HOME_POSITION)
+        self.assert_receive_message('HOME_POSITION', check_context=True)
+
+    def MAV_CMD_GET_HOME_POSITION(self):
+        '''test handling of mavlink command MAV_CMD_GET_HOME_POSITION'''
+        self.change_mode('LOITER')
+        self.wait_ready_to_arm()
+        self._MAV_CMD_GET_HOME_POSITION(self.run_cmd)
+        self._MAV_CMD_GET_HOME_POSITION(self.run_cmd_int)
+
+    def MAV_CMD_DO_FENCE_ENABLE(self):
+        '''ensure MAV_CMD_DO_FENCE_ENABLE mavlink command works'''
+        here = self.mav.location()
+
+        self.upload_fences_from_locations(
+            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION,
+            [
+                [ # east
+                    self.offset_location_ne(here, -50, 20), # bl
+                    self.offset_location_ne(here, 50, 20), # br
+                    self.offset_location_ne(here, 50, 40), # tr
+                    self.offset_location_ne(here, -50, 40), # tl,
+                ], [ # over the top of the vehicle
+                    self.offset_location_ne(here, -50, -50), # bl
+                    self.offset_location_ne(here, -50, 50), # br
+                    self.offset_location_ne(here, 50, 50), # tr
+                    self.offset_location_ne(here, 50, -50), # tl,
+                ]
+            ]
+        )
+
+        # enable:
+        self.run_cmd(mavutil.mavlink.MAV_CMD_DO_FENCE_ENABLE, p1=1)
+        self.assert_fence_enabled()
+
+        # disable
+        self.run_cmd_int(mavutil.mavlink.MAV_CMD_DO_FENCE_ENABLE, p1=0)
+        self.assert_fence_disabled()
+
+    def MAV_CMD_BATTERY_RESET(self):
+        '''manipulate battery levels with MAV_CMD_BATTERY_RESET'''
+        for (run_cmd, value) in (self.run_cmd, 56), (self.run_cmd_int, 97):
+            run_cmd(
+                mavutil.mavlink.MAV_CMD_BATTERY_RESET,
+                p1=65535,  # battery mask
+                p2=value,
+            )
+            self.assert_received_message_field_values('BATTERY_STATUS', {
+                "battery_remaining": value,
+            }, {
+                "poll": True,
+            })
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestRover, self).tests()
@@ -6529,7 +6643,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.DriveSquare,
             self.DriveMission,
             # self.DriveBrake,  # disabled due to frequent failures
-            self.GetBanner,
+            self.MAV_CMD_DO_SEND_BANNER,
             self.DO_SET_MODE,
             self.MAVProxy_DO_SET_MODE,
             self.ServoRelayEvents,
@@ -6546,6 +6660,7 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.REQUEST_MESSAGE,
             self.SYSID_ENFORCE,
             self.SET_ATTITUDE_TARGET,
+            self.SET_ATTITUDE_TARGET_heading,
             self.SET_POSITION_TARGET_LOCAL_NED,
             self.MAV_CMD_DO_SET_MISSION_CURRENT,
             self.MAV_CMD_DO_CHANGE_SPEED,
@@ -6594,6 +6709,9 @@ Brakes have negligible effect (with=%0.2fm without=%0.2fm delta=%0.2fm)
             self.NoArmWithoutMissionItems,
             self.CompassPrearms,
             self.MAV_CMD_DO_SET_REVERSE,
+            self.MAV_CMD_GET_HOME_POSITION,
+            self.MAV_CMD_DO_FENCE_ENABLE,
+            self.MAV_CMD_BATTERY_RESET,
         ])
         return ret
 

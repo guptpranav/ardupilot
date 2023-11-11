@@ -380,7 +380,7 @@ MAV_RESULT AP_Mount::handle_command_do_gimbal_manager_configure(const mavlink_co
     return backend->handle_command_do_gimbal_manager_configure(packet, msg);
 }
 
-void AP_Mount::handle_gimbal_manager_set_attitude(const mavlink_message_t &msg){
+void AP_Mount::handle_gimbal_manager_set_attitude(const mavlink_message_t &msg) {
     mavlink_gimbal_manager_set_attitude_t packet;
     mavlink_msg_gimbal_manager_set_attitude_decode(&msg,&packet);
 
@@ -445,7 +445,7 @@ void AP_Mount::handle_gimbal_manager_set_attitude(const mavlink_message_t &msg){
     }
 }
 
-void AP_Mount::handle_command_gimbal_manager_set_pitchyaw(const mavlink_message_t &msg)
+void AP_Mount::handle_gimbal_manager_set_pitchyaw(const mavlink_message_t &msg)
 {
     mavlink_gimbal_manager_set_pitchyaw_t packet;
     mavlink_msg_gimbal_manager_set_pitchyaw_decode(&msg,&packet);
@@ -505,12 +505,6 @@ MAV_RESULT AP_Mount::handle_command_do_set_roi_sysid(const mavlink_command_int_t
     return MAV_RESULT_ACCEPTED;
 }
 
-MAV_RESULT AP_Mount::handle_command_do_set_roi_none()
-{
-    set_mode_to_default();
-    return MAV_RESULT_ACCEPTED;
-}
-
 MAV_RESULT AP_Mount::handle_command(const mavlink_command_int_t &packet, const mavlink_message_t &msg)
 {
     switch (packet.command) {
@@ -524,8 +518,6 @@ MAV_RESULT AP_Mount::handle_command(const mavlink_command_int_t &packet, const m
         return handle_command_do_gimbal_manager_configure(packet, msg);
     case MAV_CMD_DO_SET_ROI_SYSID:
         return handle_command_do_set_roi_sysid(packet);
-    case MAV_CMD_DO_SET_ROI_NONE:
-        return handle_command_do_set_roi_none();
     default:
         return MAV_RESULT_UNSUPPORTED;
     }
@@ -616,6 +608,18 @@ void AP_Mount::send_gimbal_manager_status(mavlink_channel_t chan)
     }
 }
 #endif  // HAL_GCS_ENABLED
+
+#if AP_MOUNT_POI_TO_LATLONALT_ENABLED
+// get poi information.  Returns true on success and fills in gimbal attitude, location and poi location
+bool AP_Mount::get_poi(uint8_t instance, Quaternion &quat, Location &loc, Location &poi_loc) const
+{
+    auto *backend = get_instance(instance);
+    if (backend == nullptr) {
+        return false;
+    }
+    return backend->get_poi(instance, quat, loc, poi_loc);
+}
+#endif
 
 // get mount's current attitude in euler angles in degrees.  yaw angle is in body-frame
 // returns true on success
@@ -846,6 +850,16 @@ void AP_Mount::send_camera_settings(uint8_t instance, mavlink_channel_t chan) co
     backend->send_camera_settings(chan);
 }
 
+// send camera capture status message to GCS
+void AP_Mount::send_camera_capture_status(uint8_t instance, mavlink_channel_t chan) const
+{
+    auto *backend = get_instance(instance);
+    if (backend == nullptr) {
+        return;
+    }
+    backend->send_camera_capture_status(chan);
+}
+
 // get rangefinder distance.  Returns true on success
 bool AP_Mount::get_rangefinder_distance(uint8_t instance, float& distance_m) const
 {
@@ -902,7 +916,7 @@ void AP_Mount::handle_message(mavlink_channel_t chan, const mavlink_message_t &m
         handle_gimbal_manager_set_attitude(msg);
         break;
     case MAVLINK_MSG_ID_GIMBAL_MANAGER_SET_PITCHYAW:
-        handle_command_gimbal_manager_set_pitchyaw(msg);
+        handle_gimbal_manager_set_pitchyaw(msg);
         break;
     case MAVLINK_MSG_ID_GIMBAL_DEVICE_INFORMATION:
         handle_gimbal_device_information(msg);
