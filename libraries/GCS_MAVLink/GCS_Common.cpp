@@ -4452,9 +4452,7 @@ MAV_RESULT GCS_MAVLINK::handle_command_run_prearm_checks(const mavlink_command_i
 // the current waypoint, rather than this DO command.  It is hoped we
 // can move to this command in the future to avoid acknowledgement
 // issues with MISSION_SET_CURRENT
-// This also handles DO_JUMP_TAG by converting the tag to an index
-// and setting the index as if it was a normal do_set_mission_current
-MAV_RESULT GCS_MAVLINK::handle_command_do_set_mission_current(const mavlink_command_long_t &packet)
+MAV_RESULT GCS_MAVLINK::handle_command_do_set_mission_current(const mavlink_command_int_t &packet)
 {
     AP_Mission *mission = AP::mission();
     if (mission == nullptr) {
@@ -4462,11 +4460,43 @@ MAV_RESULT GCS_MAVLINK::handle_command_do_set_mission_current(const mavlink_comm
     }
 
     const uint32_t seq = (uint32_t)packet.param1;
-    if (packet.command == MAV_CMD_DO_JUMP_TAG) {
-        if (!mission->jump_to_tag(seq)) {
-            return MAV_RESULT_FAILED;
-        }
-    } else if (!mission->set_current_cmd(seq)) {
+    if (!mission->is_valid_index(seq)) {
+        return MAV_RESULT_DENIED;
+    }
+
+    // From https://mavlink.io/en/messages/common.html#MAV_CMD_DO_SET_MISSION_CURRENT:
+    //   Param 2: Reset Mission
+    //     - Resets mission. 1: true, 0: false. Resets jump counters to initial values
+    //       and changes mission state "completed" to be "active" or "paused".
+    const bool reset_and_restart = is_equal(packet.param2, 1.0f);
+    if (reset_and_restart) {
+        mission->reset();
+    }
+    if (!mission->set_current_cmd(seq)) {
+        return MAV_RESULT_FAILED;
+    }
+    if (reset_and_restart) {
+        mission->resume();
+    }
+
+    // volunteer the new current waypoint for all listeners
+    send_message(MSG_CURRENT_WAYPOINT);
+
+    return MAV_RESULT_ACCEPTED;
+}
+
+MAV_RESULT GCS_MAVLINK::handle_command_do_jump_tag(const mavlink_command_int_t &packet)
+{
+    AP_Mission *mission = AP::mission();
+    if (mission == nullptr) {
+        return MAV_RESULT_UNSUPPORTED;
+    }
+
+    const uint32_t tag = (uint32_t)packet.param1;
+    if (tag > UINT16_MAX) {
+        return MAV_RESULT_DENIED;
+    }
+    if (!mission->jump_to_tag(tag)) {
         return MAV_RESULT_FAILED;
     }
 
@@ -4489,7 +4519,7 @@ MAV_RESULT GCS_MAVLINK::handle_command_battery_reset(const mavlink_command_int_t
 #endif
 
 #if AP_MAVLINK_MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES_ENABLED
-MAV_RESULT GCS_MAVLINK::handle_command_request_autopilot_capabilities(const mavlink_command_long_t &packet)
+MAV_RESULT GCS_MAVLINK::handle_command_request_autopilot_capabilities(const mavlink_command_int_t &packet)
 {
     if (!is_equal(packet.param1,1.0f)) {
         return MAV_RESULT_FAILED;
@@ -4721,40 +4751,6 @@ MAV_RESULT GCS_MAVLINK::try_command_long_as_command_int(const mavlink_command_lo
     return handle_command_int_packet(command_int, msg);
 }
 
-MAV_RESULT GCS_MAVLINK::handle_command_long_packet(const mavlink_command_long_t &packet, const mavlink_message_t &msg)
-{
-    MAV_RESULT result = MAV_RESULT_FAILED;
-
-    switch (packet.command) {
-
-#if AP_MAVLINK_MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES_ENABLED
-    case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES: {
-        result = handle_command_request_autopilot_capabilities(packet);
-        break;
-    }
-#endif
-
-    case MAV_CMD_DO_JUMP_TAG:
-    case MAV_CMD_DO_SET_MISSION_CURRENT:
-        result = handle_command_do_set_mission_current(packet);
-        break;
-
-    default:
-        result = try_command_long_as_command_int(packet, msg);
-        break;
-    }
-
-    return result;
-}
-
-bool GCS_MAVLINK::location_from_command_t(const mavlink_command_long_t &in, MAV_FRAME in_frame, Location &out)
-{
-    mavlink_command_int_t command_int;
-    convert_COMMAND_LONG_to_COMMAND_INT(in, command_int, in_frame);
-
-    return location_from_command_t(command_int, out);
-}
-
 bool GCS_MAVLINK::location_from_command_t(const mavlink_command_int_t &in, Location &out)
 {
     if (!command_long_stores_location((MAV_CMD)in.command)) {
@@ -4780,6 +4776,7 @@ bool GCS_MAVLINK::location_from_command_t(const mavlink_command_int_t &in, Locat
     return true;
 }
 
+#if AP_MAVLINK_COMMAND_LONG_ENABLED
 bool GCS_MAVLINK::command_long_stores_location(const MAV_CMD command)
 {
     switch(command) {
@@ -4847,7 +4844,7 @@ void GCS_MAVLINK::handle_command_long(const mavlink_message_t &msg)
 
     hal.util->persistent_data.last_mavlink_cmd = packet.command;
 
-    const MAV_RESULT result = handle_command_long_packet(packet, msg);
+    const MAV_RESULT result = try_command_long_as_command_int(packet, msg);
 
     // send ACK or NAK
     mavlink_msg_command_ack_send(chan, packet.command, result,
@@ -4862,6 +4859,7 @@ void GCS_MAVLINK::handle_command_long(const mavlink_message_t &msg)
 
     hal.util->persistent_data.last_mavlink_cmd = 0;
 }
+#endif  // AP_MAVLINK_COMMAND_LONG_ENABLED
 
 MAV_RESULT GCS_MAVLINK::handle_command_do_set_roi(const Location &roi_loc)
 {
@@ -5048,6 +5046,12 @@ MAV_RESULT GCS_MAVLINK::handle_command_int_packet(const mavlink_command_int_t &p
         return handle_command_do_gripper(packet);
 #endif
 
+    case MAV_CMD_DO_JUMP_TAG:
+        return handle_command_do_jump_tag(packet);
+
+    case MAV_CMD_DO_SET_MISSION_CURRENT:
+        return handle_command_do_set_mission_current(packet);
+
     case MAV_CMD_DO_SET_MODE:
         return handle_command_do_set_mode(packet);
 
@@ -5142,6 +5146,11 @@ MAV_RESULT GCS_MAVLINK::handle_command_int_packet(const mavlink_command_int_t &p
     case MAV_CMD_DO_SET_RELAY:
     case MAV_CMD_DO_REPEAT_RELAY:
         return handle_servorelay_message(packet);
+#endif
+
+#if AP_MAVLINK_MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES_ENABLED
+    case MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES:
+        return handle_command_request_autopilot_capabilities(packet);
 #endif
 
     case MAV_CMD_RUN_PREARM_CHECKS:
