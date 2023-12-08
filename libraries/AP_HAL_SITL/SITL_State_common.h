@@ -11,6 +11,7 @@
 #include <SITL/SIM_Gimbal.h>
 #include <SITL/SIM_ADSB.h>
 #include <SITL/SIM_ADSB_Sagetech_MXS.h>
+#include <SITL/SIM_EFI_Hirth.h>
 #include <SITL/SIM_Vicon.h>
 #include <SITL/SIM_RF_Benewake_TF02.h>
 #include <SITL/SIM_RF_Benewake_TF03.h>
@@ -196,8 +197,11 @@ public:
     // simulated VectorNav system:
     SITL::VectorNav *vectornav;
 
-    // simulated LORD MicroStrain system
+    // simulated MicroStrain system
     SITL::MicroStrain5 *microstrain5;
+
+    // simulated MicroStrain system
+    SITL::MicroStrain7 *microstrain7;
 
 #if HAL_SIM_JSON_MASTER_ENABLED
     // Ride along instances via JSON SITL backend
@@ -211,6 +215,9 @@ public:
 
     // simulated EFI MegaSquirt device:
     SITL::EFI_MegaSquirt *efi_ms;
+
+    // simulated EFI MegaSquirt device:
+    SITL::EFI_Hirth *efi_hirth;
 
     // output socket for flightgear viewing
     SocketAPM fg_socket{true};
