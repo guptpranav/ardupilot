@@ -103,8 +103,9 @@ function maybe_prompt_user() {
 # see https://github.com/orgs/Homebrew/discussions/3895
 find /usr/local/bin -lname '*/Library/Frameworks/Python.framework/*' -delete
 
+# brew update randomly failing on CI, so ignore errors:
 brew update
-brew install gawk curl coreutils wget
+brew install --force --overwrite gawk curl coreutils wget
 
 PIP=pip
 if maybe_prompt_user "Install python using pyenv [N/y]?" ; then
