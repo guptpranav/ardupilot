@@ -16,8 +16,8 @@
     $ sim_vehicle.py -v Plane -A "--serial3=uart:/dev/3dm-gq7" --console --map -DG
     $ ./Tools/autotest/sim_vehicle.py -v Plane -A "--serial3=uart:/dev/3dm-gq7" -DG
     param set AHRS_EKF_TYPE 11
-    param set EAHRS_TYPE 4
-    param set GPS_TYPE 21
+    param set EAHRS_TYPE 7
+    param set GPS1_TYPE 21
     param set SERIAL3_BAUD 115
     param set SERIAL3_PROTOCOL 36
   UDEV rules for repeatable USB connection:
@@ -64,6 +64,11 @@ AP_ExternalAHRS_MicroStrain7::AP_ExternalAHRS_MicroStrain7(AP_ExternalAHRS *_fro
     if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_ExternalAHRS_MicroStrain7::update_thread, void), "AHRS", 2048, AP_HAL::Scheduler::PRIORITY_SPI, 0)) {
         AP_BoardConfig::allocation_error("MicroStrain7 failed to allocate ExternalAHRS update thread");
     }
+
+    // don't offer IMU by default, at 100Hz it is too slow for many aircraft
+    set_default_sensors(uint16_t(AP_ExternalAHRS::AvailableSensor::GPS) |
+                        uint16_t(AP_ExternalAHRS::AvailableSensor::BARO) |
+                        uint16_t(AP_ExternalAHRS::AvailableSensor::COMPASS));
 
     hal.scheduler->delay(5000);
     GCS_SEND_TEXT(MAV_SEVERITY_INFO, "MicroStrain7 ExternalAHRS initialised");
@@ -129,9 +134,6 @@ void AP_ExternalAHRS_MicroStrain7::post_imu() const
         WITH_SEMAPHORE(state.sem);
         state.accel = imu_data.accel;
         state.gyro = imu_data.gyro;
-
-        state.quat = imu_data.quat;
-        state.have_quaternion = true;
     }
 
     {
@@ -183,6 +185,9 @@ void AP_ExternalAHRS_MicroStrain7::post_filter() const
         // Use GNSS 0 even though it may be bad.
         state.location = Location{filter_data.lat, filter_data.lon, gnss_data[0].msl_altitude, Location::AltFrame::ABSOLUTE};
         state.have_location = true;
+
+        state.quat = filter_data.attitude_quat;
+        state.have_quaternion = true;
     }
 
     for (int instance = 0; instance < NUM_GNSS_INSTANCES; instance++) {

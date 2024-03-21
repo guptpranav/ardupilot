@@ -189,7 +189,7 @@ Next, follow the associated section for your chosen transport, and finally you c
 - Run SITL (remember to kill any terminals running ardupilot SITL beforehand)
   ```console
   # assuming we are using /dev/pts/1 for Ardupilot SITL
-  sim_vehicle.py -v ArduPlane -DG --console --enable-dds -A "--uartC=uart:/dev/pts/1"
+  sim_vehicle.py -v ArduPlane -DG --console --enable-dds -A "--serial1=uart:/dev/pts/1"
   ```
 
 ## Use ROS 2 CLI
@@ -202,11 +202,13 @@ $ ros2 node list
 ```
 
 ```bash
-$ ros2 topic list  -v
+$ ros2 topic list -v
 Published topics:
  * /ap/battery/battery0 [sensor_msgs/msg/BatteryState] 1 publisher
  * /ap/clock [rosgraph_msgs/msg/Clock] 1 publisher
  * /ap/geopose/filtered [geographic_msgs/msg/GeoPoseStamped] 1 publisher
+ * /ap/gps_global_origin/filtered [geographic_msgs/msg/GeoPointStamped] 1 publisher
+ * /ap/imu/experimental/data [sensor_msgs/msg/Imu] 1 publisher
  * /ap/navsat/navsat0 [sensor_msgs/msg/NavSatFix] 1 publisher
  * /ap/pose/filtered [geometry_msgs/msg/PoseStamped] 1 publisher
  * /ap/tf_static [tf2_msgs/msg/TFMessage] 1 publisher
@@ -216,6 +218,7 @@ Published topics:
  * /rosout [rcl_interfaces/msg/Log] 1 publisher
 
 Subscribed topics:
+ * /ap/cmd_gps_pose [ardupilot_msgs/msg/GlobalPosition] 1 subscriber
  * /ap/cmd_vel [geometry_msgs/msg/TwistStamped] 1 subscriber
  * /ap/joy [sensor_msgs/msg/Joy] 1 subscriber
  * /ap/tf [tf2_msgs/msg/TFMessage] 1 subscriber
@@ -310,6 +313,10 @@ cp /opt/ros/humble/share/builtin_interfaces/msg/Time.idl libraries/AP_DDS/Idl/bu
 
 # Build the code again with the `--enable-dds` flag as described above
 ```
+
+If the message is custom for ardupilot, first create the ROS message in `Tools/ros2/ardupilot_msgs/msg/GlobalPosition.msg`.
+Then, build ardupilot_msgs with colcon.
+Finally, copy the IDL folder from the install directory into the source tree.
 
 ### Rules for adding topics and services to `dds_xrce_profile.xml`
 
