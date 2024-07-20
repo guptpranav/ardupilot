@@ -217,6 +217,7 @@ public:
         KILL_IMU3 =          110, // disable third IMU (for IMU failure testing)
         LOWEHEISER_STARTER = 111,  // allows for manually running starter
         AHRS_TYPE =          112, // change AHRS_EKF_TYPE
+        RETRACT_MOUNT2 =     113, // Retract Mount2
 
         // if you add something here, make sure to update the documentation of the parameter in RC_Channel.cpp!
         // also, if you add an option >255, you will need to fix duplicate_options_exist
@@ -249,6 +250,8 @@ public:
         CAMERA_IMAGE_TRACKING = 174, // camera image tracking
         CAMERA_LENS =        175, // camera lens selection
         VFWD_THR_OVERRIDE =  176, // force enabled VTOL forward throttle method
+        MOUNT_LRF_ENABLE =   177,  // mount LRF enable/disable
+        FLIGHTMODE_PAUSE =   178,  // e.g. pause movement towards waypoint
 
 
         // inputs from 200 will eventually used to replace RCMAP
@@ -360,6 +363,7 @@ protected:
     void do_aux_function_sprayer(const AuxSwitchPos ch_flag);
     void do_aux_function_generator(const AuxSwitchPos ch_flag);
     void do_aux_function_fft_notch_tune(const AuxSwitchPos ch_flag);
+    void do_aux_function_retract_mount(const AuxSwitchPos ch_flag, const uint8_t instance);
 
     typedef int8_t modeswitch_pos_t;
     virtual void mode_switch_changed(modeswitch_pos_t new_pos) {
@@ -406,11 +410,19 @@ private:
         int8_t debounce_position = -1;
         int8_t current_position = -1;
         uint32_t last_edge_time_ms;
+        bool initialised;
     } switch_state;
 
     void reset_mode_switch();
     void read_mode_switch();
     bool debounce_completed(int8_t position);
+    // returns true if the first time we successfully read the
+    // channel's three-position-switch position we should record that
+    // position as the current position *without* executing the
+    // associated auxiliary function.  e.g. do not attempt to arm a
+    // vehicle when the user turns on their transmitter with the arm
+    // switch high!
+    bool init_position_on_first_radio_read(AUX_FUNC func) const;
 
 #if AP_RC_CHANNEL_AUX_FUNCTION_STRINGS_ENABLED
     // Structure to lookup switch change announcements

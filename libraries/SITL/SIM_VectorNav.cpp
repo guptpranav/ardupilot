@@ -29,7 +29,7 @@ VectorNav::VectorNav() :
 {
 }
 
-struct PACKED VN_packet1 {
+struct PACKED VN_INS_packet1 {
     float uncompMag[3];
     float uncompAccel[3];
     float uncompAngRate[3];
@@ -46,7 +46,7 @@ struct PACKED VN_packet1 {
     float velU;
 };
 
-struct PACKED VN_packet2 {
+struct PACKED VN_INS_packet2 {
     uint64_t timeGPS;
     float temp;
     uint8_t numGPS1Sats;
@@ -84,7 +84,7 @@ void VectorNav::send_packet1(void)
 {
     const auto &fdm = _sitl->state;
 
-    struct VN_packet1 pkt {};
+    struct VN_INS_packet1 pkt {};
 
     pkt.uncompAccel[0] = fdm.xAccel;
     pkt.uncompAccel[1] = fdm.yAccel;
@@ -94,9 +94,8 @@ void VectorNav::send_packet1(void)
     pkt.uncompAngRate[1] = radians(fdm.pitchRate + gyro_noise * rand_float());
     pkt.uncompAngRate[2] = radians(fdm.yawRate + gyro_noise * rand_float());
 
-    float sigma, delta, theta;
-    AP_Baro::SimpleAtmosphere(fdm.altitude * 0.001f, sigma, delta, theta);
-    pkt.pressure = SSL_AIR_PRESSURE * delta * 0.001 + rand_float() * 0.01;
+    const float pressure_Pa = AP_Baro::get_pressure_for_alt_amsl(fdm.altitude);
+    pkt.pressure = pressure_Pa*0.001 + rand_float() * 0.01;
 
     pkt.mag[0] = fdm.bodyMagField.x*0.001;
     pkt.mag[1] = fdm.bodyMagField.y*0.001;
@@ -147,13 +146,14 @@ void VectorNav::send_packet2(void)
 {
     const auto &fdm = _sitl->state;
 
-    struct VN_packet2 pkt {};
+    struct VN_INS_packet2 pkt {};
 
     struct timeval tv;
     simulation_timeval(&tv);
 
     pkt.timeGPS = tv.tv_usec * 1000ULL;
-    pkt.temp = 23.5;
+
+    pkt.temp = AP_Baro::get_temperatureC_for_alt_amsl(fdm.altitude);
     pkt.numGPS1Sats = 19;
     pkt.GPS1Fix = 3;
     pkt.GPS1posLLA[0] = fdm.latitude;
@@ -213,11 +213,14 @@ void VectorNav::update(void)
         send_packet2();
     }
 
-    // Strictly we should send this in responce to the request
-    // but sending it occasionally acheaves the same thing
-    if (now - last_type_us >= 1000000) {
-        last_type_us = now;
-        nmea_printf("$VNRRG,01,VN-300-SITL");
+    char receive_buf[50];
+    const ssize_t n = read_from_autopilot(&receive_buf[0], ARRAY_SIZE(receive_buf));
+    if (n > 0) {
+        if (strncmp(receive_buf, "$VNRRG,01", 9) == 0) {
+            nmea_printf("$VNRRG,01,VN-300-SITL");
+        } else {
+            nmea_printf("$%s", receive_buf);
+        }
     }
 
 }

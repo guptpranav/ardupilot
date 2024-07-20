@@ -8,10 +8,8 @@ from __future__ import print_function
 import math
 import os
 import signal
-import time
 
 from pymavlink import quaternion
-from pymavlink import mavextra
 from pymavlink import mavutil
 
 from pymavlink.rotmat import Vector3
@@ -1610,18 +1608,14 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             # Test arming outside inclusion zone
             self.progress("Test arming while vehicle outside of inclusion zone")
             self.set_parameter("FENCE_TYPE", 4) # Enables polygon fence types
-            locs = [
-                mavutil.location(1.000, 1.000, 0, 0),
-                mavutil.location(1.000, 1.001, 0, 0),
-                mavutil.location(1.001, 1.001, 0, 0),
-                mavutil.location(1.001, 1.000, 0, 0)
-            ]
-            self.upload_fences_from_locations(
-                mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
-                [
-                    locs
+            self.upload_fences_from_locations([(
+                mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, [
+                    mavutil.location(1.000, 1.000, 0, 0),
+                    mavutil.location(1.000, 1.001, 0, 0),
+                    mavutil.location(1.001, 1.001, 0, 0),
+                    mavutil.location(1.001, 1.000, 0, 0)
                 ]
-            )
+            )])
             self.delay_sim_time(10) # let fence check run so it loads-from-eeprom
             self.do_fence_enable()
             self.assert_fence_enabled()
@@ -1639,12 +1633,9 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
                 mavutil.location(home_loc.lat + 0.001, home_loc.lng + 0.001, 0, 0),
                 mavutil.location(home_loc.lat + 0.001, home_loc.lng - 0.001, 0, 0),
             ]
-            self.upload_fences_from_locations(
-                mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION,
-                [
-                    locs
-                ]
-            )
+            self.upload_fences_from_locations([
+                (mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_EXCLUSION, locs),
+            ])
             self.delay_sim_time(10) # let fence check run so it loads-from-eeprom
             self.do_fence_enable()
             self.assert_fence_enabled()
@@ -1897,7 +1888,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.install_message_hook_context(terrain_following_above_80m)
 
         self.change_mode("GUIDED")
-        self.do_reposition(guided_loc, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT)
+        self.send_do_reposition(guided_loc, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT)
         self.progress("Flying to guided location")
         self.wait_location(
             guided_loc,
@@ -1920,7 +1911,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
 
         # Fly back to guided location
         self.change_mode("GUIDED")
-        self.do_reposition(guided_loc, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT)
+        self.send_do_reposition(guided_loc, frame=mavutil.mavlink.MAV_FRAME_GLOBAL_TERRAIN_ALT)
         self.progress("Flying to back to guided location")
 
         # Disable terrain following and re-load rally point with relative to terrain altitude
@@ -2005,70 +1996,6 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.start_subtest(desc)
         func()
 
-    def check_attitudes_match(self, a, b):
-        '''make sure ahrs2 and simstate and ATTTIUDE_QUATERNION all match'''
-
-        # these are ordered to bookend the list with timestamps (which
-        # both attitude messages have):
-        get_names = ['ATTITUDE', 'SIMSTATE', 'AHRS2', 'ATTITUDE_QUATERNION']
-        msgs = self.get_messages_frame(get_names)
-
-        for get_name in get_names:
-            self.progress("%s: %s" % (get_name, msgs[get_name]))
-
-        simstate = msgs['SIMSTATE']
-        attitude = msgs['ATTITUDE']
-        ahrs2 = msgs['AHRS2']
-        attitude_quaternion = msgs['ATTITUDE_QUATERNION']
-
-        # check ATTITUDE
-        want = math.degrees(simstate.roll)
-        got = math.degrees(attitude.roll)
-        if abs(mavextra.angle_diff(want, got)) > 20:
-            raise NotAchievedException("ATTITUDE.Roll looks bad (want=%f got=%f)" %
-                                       (want, got))
-        want = math.degrees(simstate.pitch)
-        got = math.degrees(attitude.pitch)
-        if abs(mavextra.angle_diff(want, got)) > 20:
-            raise NotAchievedException("ATTITUDE.Pitch looks bad (want=%f got=%f)" %
-                                       (want, got))
-
-        # check AHRS2
-        want = math.degrees(simstate.roll)
-        got = math.degrees(ahrs2.roll)
-        if abs(mavextra.angle_diff(want, got)) > 20:
-            raise NotAchievedException("AHRS2.Roll looks bad (want=%f got=%f)" %
-                                       (want, got))
-
-        want = math.degrees(simstate.pitch)
-        got = math.degrees(ahrs2.pitch)
-        if abs(mavextra.angle_diff(want, got)) > 20:
-            raise NotAchievedException("AHRS2.Pitch looks bad (want=%f got=%f)" %
-                                       (want, got))
-
-        # check ATTITUDE_QUATERNION
-        q = quaternion.Quaternion([
-            attitude_quaternion.q1,
-            attitude_quaternion.q2,
-            attitude_quaternion.q3,
-            attitude_quaternion.q4
-        ])
-        euler = q.euler
-        self.progress("attquat:%s q:%s euler:%s" % (
-            str(attitude_quaternion), q, euler))
-
-        want = math.degrees(simstate.roll)
-        got = math.degrees(euler[0])
-        if mavextra.angle_diff(want, got) > 20:
-            raise NotAchievedException("quat roll differs from attitude roll; want=%f got=%f" %
-                                       (want, got))
-
-        want = math.degrees(simstate.pitch)
-        got = math.degrees(euler[1])
-        if mavextra.angle_diff(want, got) > 20:
-            raise NotAchievedException("quat pitch differs from attitude pitch; want=%f got=%f" %
-                                       (want, got))
-
     def fly_ahrs2_test(self):
         '''check secondary estimator is looking OK'''
 
@@ -2089,7 +2016,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         if self.get_distance_int(gpi, ahrs2) > 10:
             raise NotAchievedException("Secondary location looks bad")
 
-        self.check_attitudes_match(1, 2)
+        self.check_attitudes_match()
 
     def MainFlight(self):
         '''Lots of things in one flight'''
@@ -2201,36 +2128,18 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.fly_home_land_and_disarm()
 
     def deadreckoning_main(self, disable_airspeed_sensor=False):
+        self.context_push()
+        self.set_parameter("EK3_OPTIONS", 1)
+        self.set_parameter("AHRS_OPTIONS", 3)
+        self.set_parameter("LOG_REPLAY", 1)
         self.reboot_sitl()
         self.wait_ready_to_arm()
-        self.gpi = None
-        self.simstate = None
-        self.last_print = 0
-        self.max_divergence = 0
 
-        def validate_global_position_int_against_simstate(mav, m):
-            if m.get_type() == 'GLOBAL_POSITION_INT':
-                self.gpi = m
-            elif m.get_type() == 'SIMSTATE':
-                self.simstate = m
-            if self.gpi is None:
-                return
-            if self.simstate is None:
-                return
-            divergence = self.get_distance_int(self.gpi, self.simstate)
-            max_allowed_divergence = 200
-            if (time.time() - self.last_print > 1 or
-                    divergence > self.max_divergence):
-                self.progress("position-estimate-divergence=%fm" % (divergence,))
-                self.last_print = time.time()
-            if divergence > self.max_divergence:
-                self.max_divergence = divergence
-            if divergence > max_allowed_divergence:
-                raise NotAchievedException(
-                    "global-position-int diverged from simstate by %fm (max=%fm" %
-                    (divergence, max_allowed_divergence,))
-
-        self.install_message_hook(validate_global_position_int_against_simstate)
+        if disable_airspeed_sensor:
+            max_allowed_divergence = 300
+        else:
+            max_allowed_divergence = 150
+        self.install_message_hook_context(vehicle_test_suite.TestSuite.ValidateGlobalPositionIntAgainstSimState(self, max_allowed_divergence=max_allowed_divergence))  # noqa
 
         try:
             # wind is from the West:
@@ -2253,20 +2162,49 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
                 frame=mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
             )
             self.wait_location(loc, accuracy=100)
-            self.progress("Stewing")
-            self.delay_sim_time(20)
+            self.progress("Orbit with GPS and learn wind")
+            # allow longer to learn wind if there is no airspeed sensor
+            if disable_airspeed_sensor:
+                self.delay_sim_time(60)
+            else:
+                self.delay_sim_time(20)
             self.set_parameter("SIM_GPS_DISABLE", 1)
-            self.progress("Roasting")
+            self.progress("Continue orbit without GPS")
             self.delay_sim_time(20)
             self.change_mode("RTL")
             self.wait_distance_to_home(100, 200, timeout=200)
+            # go into LOITER to create additonal time for a GPS re-enable test
+            self.change_mode("LOITER")
             self.set_parameter("SIM_GPS_DISABLE", 0)
+            t_enabled = self.get_sim_time()
+            # The EKF should wait for GPS checks to pass when we are still able to navigate using dead reckoning
+            # to prevent bad GPS being used when coming back after loss of lock due to interence.
+            self.wait_ekf_flags(mavutil.mavlink.ESTIMATOR_POS_HORIZ_ABS, 0, timeout=15)
+            if self.get_sim_time() < (t_enabled+9):
+                raise NotAchievedException("GPS use re-started too quickly")
+            # wait for EKF and vehicle position to stabilise, then test response to jamming
+            self.delay_sim_time(20)
+
+            self.set_parameter("AHRS_OPTIONS", 1)
+            self.set_parameter("SIM_GPS_JAM", 1)
             self.delay_sim_time(10)
+            self.set_parameter("SIM_GPS_JAM", 0)
+            t_enabled = self.get_sim_time()
+            # The EKF should wait for GPS checks to pass when we are still able to navigate using dead reckoning
+            # to prevent bad GPS being used when coming back after loss of lock due to interence.
+            # The EKF_STATUS_REPORT does not tell us when the good to align check passes, so the minimum time
+            # value of 3.0 seconds is an arbitrary value set on inspection of dataflash logs from this test
+            self.wait_ekf_flags(mavutil.mavlink.ESTIMATOR_POS_HORIZ_ABS, 0, timeout=15)
+            time_since_jamming_stopped = self.get_sim_time() - t_enabled
+            if time_since_jamming_stopped < 3:
+                raise NotAchievedException("GPS use re-started %f sec after jamming stopped" % time_since_jamming_stopped)
             self.set_rc(3, 1000)
             self.fly_home_land_and_disarm()
-            self.progress("max-divergence: %fm" % (self.max_divergence,))
         finally:
-            self.remove_message_hook(validate_global_position_int_against_simstate)
+            pass
+
+        self.context_pop()
+        self.reboot_sitl()
 
     def Deadreckoning(self):
         '''Test deadreckoning support'''
@@ -3078,7 +3016,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             if m.relative_alt/1000.0 > max_alt:
                 max_alt = m.relative_alt/1000.0
 
-        self.install_message_hook(record_maxalt)
+        self.install_message_hook_context(record_maxalt)
 
         self.fly_mission_waypoints(num_wp-1, mission_timeout=600)
 
@@ -3169,7 +3107,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.fly_home_land_and_disarm(240)
 
     def fly_external_AHRS(self, sim, eahrs_type, mission):
-        """Fly with external AHRS (VectorNav)"""
+        """Fly with external AHRS"""
         self.customise_SITL_commandline(["--serial4=sim:%s" % sim])
 
         self.set_parameters({
@@ -3292,6 +3230,55 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
     def InertialLabsEAHRS(self):
         '''Test InertialLabs EAHRS support'''
         self.fly_external_AHRS("ILabs", 5, "ap1.txt")
+
+    def GpsSensorPreArmEAHRS(self):
+        '''Test pre-arm checks related to EAHRS_SENSORS using the MicroStrain7 driver'''
+        self.customise_SITL_commandline(["--serial4=sim:MicroStrain7"])
+
+        self.set_parameters({
+            "EAHRS_TYPE": 7,
+            "SERIAL4_PROTOCOL": 36,
+            "SERIAL4_BAUD": 230400,
+            "GPS1_TYPE": 0, # Disabled (simulate user setup error)
+            "GPS2_TYPE": 0, # Disabled (simulate user setup error)
+            "AHRS_EKF_TYPE": 11,
+            "INS_GYR_CAL": 1,
+            "EAHRS_SENSORS": 13, # GPS is enabled
+        })
+        self.reboot_sitl()
+        self.delay_sim_time(5)
+        self.progress("Running accelcal")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            p5=4,
+            timeout=5,
+        )
+
+        self.assert_prearm_failure("ExternalAHRS: Incorrect number", # Cut short due to message limits.
+                                   timeout=30,
+                                   other_prearm_failures_fatal=False)
+
+        self.set_parameters({
+            "EAHRS_TYPE": 7,
+            "SERIAL4_PROTOCOL": 36,
+            "SERIAL4_BAUD": 230400,
+            "GPS1_TYPE": 1, # Auto
+            "GPS2_TYPE": 21, # EARHS
+            "AHRS_EKF_TYPE": 11,
+            "INS_GYR_CAL": 1,
+            "EAHRS_SENSORS": 13, # GPS is enabled
+        })
+        self.reboot_sitl()
+        self.delay_sim_time(5)
+        self.progress("Running accelcal")
+        self.run_cmd(
+            mavutil.mavlink.MAV_CMD_PREFLIGHT_CALIBRATION,
+            p5=4,
+            timeout=5,
+        )
+        # Check prearm success with MicroStrain when the first GPS is occupied by another GPS.
+        # This supports the use case of comparing MicroStrain dual antenna to another GPS.
+        self.wait_ready_to_arm()
 
     def get_accelvec(self, m):
         return Vector3(m.xacc, m.yacc, m.zacc) * 0.001 * 9.81
@@ -3726,12 +3713,9 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             mavutil.location(home_loc.lat + 0.001, home_loc.lng + 0.001, 0, 0),
             mavutil.location(home_loc.lat + 0.001, home_loc.lng - 0.001, 0, 0),
         ]
-        self.upload_fences_from_locations(
-            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
-            [
-                locs
-            ]
-        )
+        self.upload_fences_from_locations([
+            (mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, locs),
+        ])
         self.delay_sim_time(1)
         self.wait_ready_to_arm()
         self.takeoff(alt=50)
@@ -3789,12 +3773,9 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             mavutil.location(home_loc.lat + 0.001, home_loc.lng + 0.003, 0, 0),
             mavutil.location(home_loc.lat + 0.001, home_loc.lng - 0.001, 0, 0),
         ]
-        self.upload_fences_from_locations(
-            mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION,
-            [
-                locs
-            ]
-        )
+        self.upload_fences_from_locations([
+            (mavutil.mavlink.MAV_CMD_NAV_FENCE_POLYGON_VERTEX_INCLUSION, locs),
+        ])
         self.delay_sim_time(1)
         self.wait_ready_to_arm()
         self.takeoff(alt=50)
@@ -3961,6 +3942,8 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             "plane-ice" : "needs ICE control channel for ignition",
             "quadplane-ice" : "needs ICE control channel for ignition",
             "quadplane-can" : "needs CAN periph",
+            "stratoblimp" : "not expected to fly normally",
+            "glider" : "needs balloon lift",
         }
         for frame in sorted(vinfo_options["frames"].keys()):
             self.start_subtest("Testing frame (%s)" % str(frame))
@@ -3982,7 +3965,8 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             if not isinstance(defaults, list):
                 defaults = [defaults]
             self.customise_SITL_commandline(
-                ["--defaults", ','.join(defaults), ],
+                [],
+                defaults_filepath=defaults,
                 model=model,
                 wipe=True,
             )
@@ -5353,6 +5337,89 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         self.drain_mav()
         self.assert_servo_channel_value(3, servo_min)
 
+    def ClimbThrottleSaturation(self):
+        '''check what happens when throttle is saturated in GUIDED'''
+        self.set_parameters({
+            "TECS_CLMB_MAX": 30,
+            "TKOFF_ALT": 1000,
+        })
+
+        self.change_mode("TAKEOFF")
+        self.wait_ready_to_arm()
+        self.arm_vehicle()
+        self.wait_message_field_values('VFR_HUD', {
+            "throttle": 100,
+        }, minimum_duration=30, timeout=90)
+        self.disarm_vehicle(force=True)
+        self.reboot_sitl()
+
+    def GuidedAttitudeNoGPS(self):
+        '''test that guided-attitude still works with no GPS'''
+        self.takeoff(50)
+        self.change_mode('GUIDED')
+        self.context_push()
+        self.set_parameter('SIM_GPS_DISABLE', 1)
+        self.delay_sim_time(30)
+        self.set_attitude_target()
+        self.context_pop()
+        self.fly_home_land_and_disarm()
+
+    def ScriptStats(self):
+        '''test script stats logging'''
+        self.context_push()
+        self.set_parameters({
+            'SCR_ENABLE': 1,
+            'SCR_DEBUG_OPTS': 8,  # runtime memory usage and time
+        })
+        self.install_test_scripts_context([
+            "math.lua",
+            "strings.lua",
+        ])
+        self.install_example_script_context('simple_loop.lua')
+        self.context_collect('STATUSTEXT')
+
+        self.reboot_sitl()
+
+        self.wait_statustext('hello, world')
+        delay = 20
+        self.delay_sim_time(delay, reason='gather some stats')
+        self.wait_statustext("math.lua exceeded time limit", check_context=True, timeout=0)
+
+        dfreader = self.dfreader_for_current_onboard_log()
+        seen_hello_world = False
+#        runtime = None
+        while True:
+            m = dfreader.recv_match(type=['SCR'])
+            if m is None:
+                break
+            if m.Name == "simple_loop.lua":
+                seen_hello_world = True
+#            if m.Name == "math.lua":
+#                runtime = m.Runtime
+
+        if not seen_hello_world:
+            raise NotAchievedException("Did not see simple_loop.lua script")
+
+#        self.progress(f"math took {runtime} seconds to run over {delay} seconds")
+#        if runtime == 0:
+#            raise NotAchievedException("Expected non-zero runtime for math")
+
+        self.context_pop()
+        self.reboot_sitl()
+
+    def GPSPreArms(self):
+        '''ensure GPS prearm checks work'''
+        self.wait_ready_to_arm()
+        self.start_subtest('DroneCAN sanity checks')
+        self.set_parameter('GPS1_TYPE', 9)
+        self.set_parameter('GPS2_TYPE', 9)
+        self.set_parameter('GPS1_CAN_OVRIDE', 130)
+        self.set_parameter('GPS2_CAN_OVRIDE', 130)
+        self.assert_prearm_failure(
+            "set for multiple GPS",
+            other_prearm_failures_fatal=False,
+        )
+
     def tests(self):
         '''return list of all tests'''
         ret = super(AutoTestPlane, self).tests()
@@ -5408,6 +5475,7 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.MicroStrainEAHRS5,
             self.MicroStrainEAHRS7,
             self.InertialLabsEAHRS,
+            self.GpsSensorPreArmEAHRS,
             self.Deadreckoning,
             self.DeadreckoningNoAirSpeed,
             self.EKFlaneswitch,
@@ -5461,6 +5529,10 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
             self.MAV_CMD_NAV_LOITER_UNLIM,
             self.MAV_CMD_NAV_RETURN_TO_LAUNCH,
             self.MinThrottle,
+            self.ClimbThrottleSaturation,
+            self.GuidedAttitudeNoGPS,
+            self.ScriptStats,
+            self.GPSPreArms,
         ])
         return ret
 
@@ -5468,4 +5540,5 @@ class AutoTestPlane(vehicle_test_suite.TestSuite):
         return {
             "LandingDrift": "Flapping test. See https://github.com/ArduPilot/ardupilot/issues/20054",
             "InteractTest": "requires user interaction",
+            "ClimbThrottleSaturation": "requires https://github.com/ArduPilot/ardupilot/pull/27106 to pass",
         }

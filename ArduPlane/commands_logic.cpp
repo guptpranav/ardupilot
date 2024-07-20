@@ -255,14 +255,16 @@ bool Plane::verify_command(const AP_Mission::Mission_Command& cmd)        // Ret
 
         } else {
             // use rangefinder to correct if possible
-            float height = height_above_target() - rangefinder_correction();
+            bool rangefinder_active = false;
+            float height = plane.get_landing_height(rangefinder_active);
+
             // for flare calculations we don't want to use the terrain
             // correction as otherwise we will flare early on rising
             // ground
             height -= auto_state.terrain_correction;
             return landing.verify_land(prev_WP_loc, next_WP_loc, current_loc,
                                        height, auto_state.sink_rate, auto_state.wp_proportion, auto_state.last_flying_ms, arming.is_armed(), is_flying(),
-                                       g.rangefinder_landing && rangefinder_state.in_range);
+                                       rangefinder_active);
         }
 
     case MAV_CMD_NAV_LOITER_UNLIM:
@@ -284,7 +286,7 @@ bool Plane::verify_command(const AP_Mission::Mission_Command& cmd)        // Ret
         return verify_continue_and_change_alt();
 
     case MAV_CMD_NAV_ALTITUDE_WAIT:
-        return verify_altitude_wait(cmd);
+        return mode_auto.verify_altitude_wait(cmd);
 
 #if HAL_QUADPLANE_ENABLED
     case MAV_CMD_NAV_VTOL_TAKEOFF:
@@ -350,7 +352,6 @@ void Plane::do_RTL(int32_t rtl_altitude_AMSL_cm)
     next_WP_loc = calc_best_rally_or_home_location(current_loc, rtl_altitude_AMSL_cm);
     setup_terrain_target_alt(next_WP_loc);
     set_target_altitude_location(next_WP_loc);
-    plane.altitude_error_cm = calc_altitude_error_cm();
 
     if (aparm.loiter_radius < 0) {
         loiter.direction = -1;
@@ -422,8 +423,10 @@ void Plane::do_land(const AP_Mission::Mission_Command& cmd)
         auto_state.takeoff_pitch_cd = 1000;
     }
 
+#if AP_RANGEFINDER_ENABLED
     // zero rangefinder state, start to accumulate good samples now
     memset(&rangefinder_state, 0, sizeof(rangefinder_state));
+#endif
 
     landing.do_land(cmd, relative_altitude);
 
@@ -845,26 +848,25 @@ bool Plane::verify_continue_and_change_alt()
 /*
   see if we have reached altitude or descent speed
  */
-bool Plane::verify_altitude_wait(const AP_Mission::Mission_Command &cmd)
+bool ModeAuto::verify_altitude_wait(const AP_Mission::Mission_Command &cmd)
 {
-    if (current_loc.alt > cmd.content.altitude_wait.altitude*100.0f) {
+    if (plane.current_loc.alt > cmd.content.altitude_wait.altitude*100.0f) {
         gcs().send_text(MAV_SEVERITY_INFO,"Reached altitude");
         return true;
     }
-    if (auto_state.sink_rate > cmd.content.altitude_wait.descent_rate) {
-        gcs().send_text(MAV_SEVERITY_INFO, "Reached descent rate %.1f m/s", (double)auto_state.sink_rate);
+    if (plane.auto_state.sink_rate > cmd.content.altitude_wait.descent_rate) {
+        gcs().send_text(MAV_SEVERITY_INFO, "Reached descent rate %.1f m/s", (double)plane.auto_state.sink_rate);
         return true;        
     }
 
     // if requested, wiggle servos
     if (cmd.content.altitude_wait.wiggle_time != 0) {
-        static uint32_t last_wiggle_ms;
-        if (auto_state.idle_wiggle_stage == 0 &&
-            AP_HAL::millis() - last_wiggle_ms > cmd.content.altitude_wait.wiggle_time*1000) {
-            auto_state.idle_wiggle_stage = 1;
-            last_wiggle_ms = AP_HAL::millis();
+        if (wiggle.stage == 0 &&
+            AP_HAL::millis() - wiggle.last_ms > cmd.content.altitude_wait.wiggle_time*1000) {
+            wiggle.stage = 1;
+            wiggle.last_ms = AP_HAL::millis();
+            // idle_wiggle_stage is updated in wiggle_servos()
         }
-        // idle_wiggle_stage is updated in set_servos_idle()
     }
 
     return false;

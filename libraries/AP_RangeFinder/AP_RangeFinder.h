@@ -16,6 +16,8 @@
 
 #include "AP_RangeFinder_config.h"
 
+#if AP_RANGEFINDER_ENABLED
+
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL_Boards.h>
 #include <AP_HAL/Semaphores.h>
@@ -177,6 +179,9 @@ public:
 #if AP_RANGEFINDER_AINSTEIN_LR_D1_ENABLED
         Ainstein_LR_D1 = 42,
 #endif
+#if AP_RANGEFINDER_RDS02UF_ENABLED
+        RDS02UF = 43,
+#endif
 #if AP_RANGEFINDER_SIM_ENABLED
         SIM = 100,
 #endif
@@ -316,3 +321,5 @@ private:
 namespace AP {
     RangeFinder *rangefinder();
 };
+
+#endif  // AP_RANGEFINDER_ENABLED

@@ -162,7 +162,7 @@ void AC_PID::set_notch_sample_rate(float sample_rate)
 
     if (_notch_T_filter != 0) {
         if (_target_notch == nullptr) {
-            _target_notch = new NotchFilterFloat();
+            _target_notch = NEW_NOTHROW NotchFilterFloat();
         }
         AP_Filter* filter = AP::filters().get_filter(_notch_T_filter);
         if (filter != nullptr && !filter->setup_notch_filter(*_target_notch, sample_rate)) {
@@ -174,7 +174,7 @@ void AC_PID::set_notch_sample_rate(float sample_rate)
 
     if (_notch_E_filter != 0) {
         if (_error_notch == nullptr) {
-            _error_notch = new NotchFilterFloat();
+            _error_notch = NEW_NOTHROW NotchFilterFloat();
         }
         AP_Filter* filter = AP::filters().get_filter(_notch_E_filter);
         if (filter != nullptr && !filter->setup_notch_filter(*_error_notch, sample_rate)) {
@@ -201,34 +201,48 @@ float AC_PID::update_all(float target, float measurement, float dt, bool limit, 
     _pid_info.reset = _flags._reset_filter;
     if (_flags._reset_filter) {
         _flags._reset_filter = false;
+
+        // Reset target filter
         _target = target;
-        _error = _target - measurement;
-        _derivative = 0.0f;
-        _target_derivative = 0.0f;
 #if AP_FILTER_ENABLED
         if (_target_notch != nullptr) {
             _target_notch->reset();
             _target = _target_notch->apply(_target);
         }
+#endif
+
+        // Calculate error and reset error filter
+        _error = _target - measurement;
+#if AP_FILTER_ENABLED
         if (_error_notch != nullptr) {
             _error_notch->reset();
             _error = _error_notch->apply(_error);
         }
 #endif
+        // Zero derivatives
+        _derivative = 0.0f;
+        _target_derivative = 0.0f;
+
     } else {
-        float error_last = _error;
-        float target_last = _target;
-        float error = _target - measurement;
+
+        // Apply target filters
+        const float target_last = _target;
 #if AP_FILTER_ENABLED
         // apply notch filters before FTLD/FLTE to avoid shot noise
         if (_target_notch != nullptr) {
             target = _target_notch->apply(target);
         }
+#endif
+        _target += get_filt_T_alpha(dt) * (target - _target);
+
+        // Calculate error and apply error filter
+        const float error_last = _error;
+        float error = _target - measurement;
+#if AP_FILTER_ENABLED
         if (_error_notch != nullptr) {
             error = _error_notch->apply(error);
         }
 #endif
-        _target += get_filt_T_alpha(dt) * (target - _target);
         _error += get_filt_E_alpha(dt) * (error - _error);
 
         // calculate and filter derivative

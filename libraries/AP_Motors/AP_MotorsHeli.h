@@ -133,6 +133,9 @@ public:
     // set_in_autorotation - allows main code to set when aircraft is in autorotation.
     void set_in_autorotation(bool autorotation) { _heliflags.in_autorotation = autorotation; }
 
+    // get_in_autorotation - allows main code to determine when aircraft is in autorotation.
+    bool get_in_autorotation() { return _heliflags.in_autorotation; }
+
     // set_enable_bailout - allows main code to set when RSC can immediately ramp engine instantly
     void set_enable_bailout(bool bailout) { _heliflags.enable_bailout = bailout; }
 
@@ -235,6 +238,11 @@ protected:
 
     // Update _heliflags.rotor_runup_complete value writing log event on state change
     void set_rotor_runup_complete(bool new_value);
+
+#if HAL_LOGGING_ENABLED
+    // Returns the scaling value required to convert the collective angle parameters into the cyclic-output-to-angle conversion for blade angle logging
+    float get_cyclic_angle_scaler(void) const;
+#endif
 
     // enum values for HOVER_LEARN parameter
     enum HoverLearn {

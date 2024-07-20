@@ -5,7 +5,6 @@
 #include <AP_AHRS/AP_AHRS.h>
 #include <GCS_MAVLink/GCS.h>
 #include <GCS_MAVLink/include/mavlink/v2.0/checksum.h>
-#include <AP_SerialManager/AP_SerialManager.h>
 #include <AP_RTC/AP_RTC.h>
 
 extern const AP_HAL::HAL& hal;
@@ -29,20 +28,9 @@ const AP_Mount_Siyi::HWInfo AP_Mount_Siyi::hardware_lookup_table[] {
         {{'7','3'}, "A8"},
         {{'6','B'}, "ZR10"},
         {{'7','8'}, "ZR30"},
+        {{'8','2'}, "ZT6"},
         {{'7','A'}, "ZT30"},
 };
-
-// init - performs any required initialisation for this instance
-void AP_Mount_Siyi::init()
-{
-    const AP_SerialManager& serial_manager = AP::serialmanager();
-
-    _uart = serial_manager.find_serial(AP_SerialManager::SerialProtocol_Gimbal, 0);
-    if (_uart != nullptr) {
-        _initialised = true;
-    }
-    AP_Mount_Backend::init();
-}
 
 // update mount position - should be called periodically
 void AP_Mount_Siyi::update()
@@ -97,7 +85,7 @@ void AP_Mount_Siyi::update()
     // send attitude to gimbal at 10Hz
     if (now_ms - _last_attitude_send_ms > 100) {
         _last_attitude_send_ms = now_ms;
-        send_attitude();
+        send_attitude_position();
     }
 
     // run zoom control
@@ -825,7 +813,8 @@ float AP_Mount_Siyi::get_zoom_mult_max() const
         return 0;
     case HardwareModel::A2:
     case HardwareModel::A8:
-        // a8 has 6x digital zoom
+    case HardwareModel::ZT6:
+        // a8, zt6 have 6x digital zoom
         return 6;
     case HardwareModel::ZR10:
     case HardwareModel::ZR30:
@@ -962,6 +951,64 @@ bool AP_Mount_Siyi::set_lens(uint8_t lens)
     return send_1byte_packet(SiyiCommandId::SET_CAMERA_IMAGE_TYPE, (uint8_t)cam_image_type);
 }
 
+// set_camera_source is functionally the same as set_lens except primary and secondary lenses are specified by type
+// primary and secondary sources use the AP_Camera::CameraSource enum cast to uint8_t
+bool AP_Mount_Siyi::set_camera_source(uint8_t primary_source, uint8_t secondary_source)
+{
+    // only supported on ZT30.  sanity check lens values
+    if (_hardware_model != HardwareModel::ZT30) {
+        return false;
+    }
+
+    // maps primary and secondary source to siyi camera image type
+    CameraImageType cam_image_type;
+    switch (primary_source) {
+    case 0: // Default (RGB)
+        FALLTHROUGH;
+    case 1: // RGB
+        switch (secondary_source) {
+        case 0: // RGB + Default (None)
+            cam_image_type = CameraImageType::MAIN_ZOOM_SUB_THERMAL;                // 3
+            break;
+        case 2: // PIP RGB+IR
+            cam_image_type = CameraImageType::MAIN_PIP_ZOOM_THERMAL_SUB_WIDEANGLE;  // 0
+            break;
+        case 4: // PIP RGB+RGB_WIDEANGLE
+            cam_image_type = CameraImageType::MAIN_PIP_ZOOM_WIDEANGLE_SUB_THERMAL;  // 2
+            break;
+        default:
+            return false;
+        }
+        break;
+    case 2: // IR
+        switch (secondary_source) {
+        case 0: // IR + Default (None)
+            cam_image_type = CameraImageType::MAIN_THERMAL_SUB_ZOOM;                // 7
+            break;
+        default:
+            return false;
+        }
+        break;
+    case 4: // RGB_WIDEANGLE
+        switch (secondary_source) {
+        case 0: // RGB_WIDEANGLE + Default (None)
+            cam_image_type = CameraImageType::MAIN_WIDEANGLE_SUB_THERMAL;           // 5
+            break;
+        case 2: // PIP RGB_WIDEANGLE+IR
+            cam_image_type = CameraImageType::MAIN_PIP_WIDEANGLE_THERMAL_SUB_ZOOM;  // 1
+            break;
+        default:
+            return false;
+        }
+        break;
+    default:
+        return false;
+    }
+
+    // send desired image type to camera
+    return send_1byte_packet(SiyiCommandId::SET_CAMERA_IMAGE_TYPE, (uint8_t)cam_image_type);
+}
+
 // send camera information message to GCS
 void AP_Mount_Siyi::send_camera_information(mavlink_channel_t chan) const
 {
@@ -985,6 +1032,7 @@ void AP_Mount_Siyi::send_camera_information(mavlink_channel_t chan) const
     case HardwareModel::UNKNOWN:
     case HardwareModel::A2:
     case HardwareModel::A8:
+    case HardwareModel::ZT6:
         focal_length_mm = 21;
         break;
     case HardwareModel::ZR10:
@@ -1092,6 +1140,7 @@ void AP_Mount_Siyi::check_firmware_version() const
         case HardwareModel::A2:
         case HardwareModel::ZR10:
         case HardwareModel::ZR30:
+        case HardwareModel::ZT6:
         case HardwareModel::ZT30:
             // TBD
             break;
@@ -1116,9 +1165,9 @@ void AP_Mount_Siyi::check_firmware_version() const
 }
 
 /*
- send ArduPilot attitude to gimbal
+  send ArduPilot attitude and position to gimbal
 */
-void AP_Mount_Siyi::send_attitude(void)
+void AP_Mount_Siyi::send_attitude_position(void)
 {
     const auto &ahrs = AP::ahrs();
     struct {
@@ -1140,6 +1189,35 @@ void AP_Mount_Siyi::send_attitude(void)
     attitude.yawspeed = gyro.z;
 
     send_packet(SiyiCommandId::EXTERNAL_ATTITUDE, (const uint8_t *)&attitude, sizeof(attitude));
+
+    // send location and velocity
+    struct {
+        uint32_t time_boot_ms;
+        int32_t lat, lon;
+        int32_t alt_msl, alt_ellipsoid;
+        Vector3l velocity_ned_int32;
+    } position;
+    Location loc;
+    Vector3f velocity_ned;
+    float undulation = 0;
+    if (!ahrs.get_location(loc) ||
+        !ahrs.get_velocity_NED(velocity_ned)) {
+        return;
+    }
+    AP::gps().get_undulation(undulation);
+
+    position.time_boot_ms = now_ms;
+    position.lat = loc.lat;
+    position.lon = loc.lng;
+    position.alt_msl = loc.alt;
+    position.alt_ellipsoid = position.alt_msl - undulation*100;
+
+    // convert velocity to int32 and scale to mm/s
+    position.velocity_ned_int32.x = velocity_ned.x * 1000;
+    position.velocity_ned_int32.y = velocity_ned.y * 1000;
+    position.velocity_ned_int32.z = velocity_ned.z * 1000;
+
+    send_packet(SiyiCommandId::POSITION_DATA, (const uint8_t *)&position, sizeof(position));
 }
 
 #endif // HAL_MOUNT_SIYI_ENABLED
